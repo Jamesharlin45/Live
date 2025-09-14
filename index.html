@@ -1,4 +1,4 @@
-<!<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -97,14 +97,9 @@
             background: #bdc3c7;
             cursor: not-allowed;
         }
-        .disclaimer {
+        .error {
+            color: #e74c3c;
             text-align: center;
-            font-size: 0.9em;
-            color: white;
-            margin-top: 30px;
-            background: rgba(0,0,0,0.3);
-            padding: 15px;
-            border-radius: 8px;
         }
         #last-updated {
             text-align: center;
@@ -116,15 +111,11 @@
             color: white;
             font-style: italic;
         }
-        .error {
-            color: #e74c3c;
-            text-align: center;
-        }
     </style>
 </head>
 <body>
     <h1>Upgraded Daily Betting Tips Machine (5+ Odds Accumulator)</h1>
-    <p id="status" class="loading">Loading today's tips from API-Sports... (Auto-updates daily with retries)</p>
+    <p id="status" class="loading">Loading today's tips from API-Sports...</p>
     
     <div id="tips-container" style="display: none;">
         <div id="tips-list"></div>
@@ -132,12 +123,7 @@
         <div id="last-updated"></div>
     </div>
     
-    <button id="generate-btn" onclick="generateTips()" disabled>Refresh Tips (Manual)</button>
-    
-    <div class="disclaimer">
-        <p><strong>Disclaimer:</strong> Upgraded with strong functions: Value filtering (best tips first), fast caching, failure retries (3x), real xG estimation from stats. Uses PyScript Poisson + API-Sports (key inserted). Betting risky; responsible use. No guarantees.</p>
-        <p><strong>Source:</strong> API-Sports (api-sports.io) - Free key used. Endpoints: fixtures, odds, statistics (for xG calc). Auto-fetches, filters top value bets.</p>
-    </div>
+    <button id="generate-btn" onclick="generateTips()" disabled>Refresh Tips</button>
 
     <py-script>
 import random
@@ -145,14 +131,12 @@ import datetime
 from pyscript import document, display, fetch
 import json
 import math
-import asyncio  # For retries
+import asyncio
 
-API_KEY = '9b001ed53ca2673f90e2e71d66665718'  # Your key
-RETRY_LIMIT = 3  # Strong failure handling
-CACHE_KEY = 'api_cache_'  # For localStorage caching
+API_KEY = '9b001ed53ca2673f90e2e71d66665718'
+RETRY_LIMIT = 3
 
 async def fetch_api_with_retry(url, retries=RETRY_LIMIT):
-    """Fetch with retries on failure."""
     for attempt in range(retries):
         try:
             response = await fetch(url, 
@@ -163,13 +147,13 @@ async def fetch_api_with_retry(url, retries=RETRY_LIMIT):
                 return await response.json()
             else:
                 print(f"API Error {response.status} on attempt {attempt+1}")
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                await asyncio.sleep(2 ** attempt)
         except Exception as e:
             print(f"Fetch error: {e}")
-    return None  # Failure after retries
+    return None
 
 async def get_daily_fixtures(date):
-    leagues = [39, 140, 135, 78, 61, 253, 94, 71, 144, 98]  # More leagues: EPL, La Liga, Serie A, Bundesliga, Ligue 1, MLS, Primeira, Eredivisie, Allsvenskan, Eliteserien
+    leagues = [39, 140, 135, 78, 61, 253, 94, 71, 144, 98]
     all_fixtures = []
     for league_id in leagues:
         data = await fetch_api_with_retry(f"https://v3.football.api-sports.io/fixtures?date={date}&league={league_id}&season=2025")
@@ -178,52 +162,47 @@ async def get_daily_fixtures(date):
     return all_fixtures
 
 async def get_odds(fixture_id):
-    data = await fetch_api_with_retry(f"https://v3.football.api-sports.io/odds?fixture={fixture_id}&bookmaker=8")  # Bet365 for reliable odds
+    data = await fetch_api_with_retry(f"https://v3.football.api-sports.io/odds?fixture={fixture_id}&bookmaker=8")
     if data and data['response']:
         bets = data['response'][0]['bookmakers'][0]['bets']
         for bet in bets:
             if bet['name'] == 'Match Winner':
-                return {val['value']: float(val['odd']) for val in bet['values']}  # {Home: odds, Draw: odds, Away: odds}
-    return {'Home': random.uniform(1.5, 3.0), 'Draw': random.uniform(3.0, 4.0), 'Away': random.uniform(1.5, 3.0)}  # Fallback
+                return {val['value']: float(val['odd']) for val in bet['values']}
+    return {'Home': random.uniform(1.5, 3.0), 'Draw': random.uniform(3.0, 4.0), 'Away': random.uniform(1.5, 3.0)}
 
 async def get_stats(fixture_id):
     data = await fetch_api_with_retry(f"https://v3.football.api-sports.io/fixtures/statistics?fixture={fixture_id}")
     if data and data['response']:
-        home_stats = data['response'][0]['statistics']  # Assume [0]=home, [1]=away
+        home_stats = data['response'][0]['statistics']
         away_stats = data['response'][1]['statistics']
-        # Strong xG estimation: xG ≈ (Shots on target * 0.2) + (Big chances * 0.5) + (Total shots * 0.05)
         def calc_xg(stats):
             shots_ot = next((int(s['value']) for s in stats if s['type'] == 'Shots on Goal'), 0)
             big_chances = next((int(s['value']) for s in stats if s['type'] == 'Big chances'), 0)
             total_shots = next((int(s['value']) for s in stats if s['type'] == 'Total Shots'), 0)
             return (shots_ot * 0.2) + (big_chances * 0.5) + (total_shots * 0.05)
         return calc_xg(home_stats), calc_xg(away_stats)
-    return random.uniform(1.0, 2.5), random.uniform(1.0, 2.5)  # Fallback
+    return random.uniform(1.0, 2.5), random.uniform(1.0, 2.5)
 
 def poisson_probability(lambda_val, k):
     return (math.exp(-lambda_val) * (lambda_val ** k)) / math.factorial(k)
 
 def generate_tip(fixture, odds_data, xG_h, xG_a):
-    # Poisson probs (strong: simulate up to 10 goals for accuracy)
     probs_home_win = sum(poisson_probability(xG_h, h) * sum(poisson_probability(xG_a, a) for a in range(h)) for h in range(1, 10))
     probs_draw = sum(poisson_probability(xG_h, h) * poisson_probability(xG_a, h) for h in range(10))
     probs_away_win = 1 - probs_home_win - probs_draw
     
-    # Implied probs from odds
     implied_h = 1 / odds_data.get('Home', 2.0)
     implied_d = 1 / odds_data.get('Draw', 3.5)
     implied_a = 1 / odds_data.get('Away', 2.0)
     
-    # Value = (model_prob / implied_prob) - 1  (Kelly-like, but simplified)
     value_h = (probs_home_win / implied_h) - 1 if implied_h > 0 else 0
     value_d = (probs_draw / implied_d) - 1 if implied_d > 0 else 0
     value_a = (probs_away_win / implied_a) - 1 if implied_a > 0 else 0
     
-    # Select best value tip if >0.05 (strong threshold)
     values = {'Home Win': value_h, 'Draw': value_d, 'Away Win': value_a}
     best_tip = max(values, key=values.get)
     if values[best_tip] < 0.05:
-        return None  # No strong value
+        return None
     
     odds = odds_data.get(best_tip.split(' ')[0] if 'Win' in best_tip else 'Draw', 2.0)
     
@@ -242,23 +221,21 @@ async def generate_daily_tips():
     fixtures = await get_daily_fixtures(today)
     
     if not fixtures:
-        return {"tips": [], "combined_odds": 0, "date": today, "time_generated": "API Failure - Using Mock", "error": True}
+        return {"tips": [], "combined_odds": 0, "date": today, "time_generated": "API Failure", "error": True}
     
     tips = []
     combined_odds = 1.0
-    for fix in fixtures[:30]:  # Up to 30 for more options
+    for fix in fixtures[:30]:
         odds_data = await get_odds(fix['fixture']['id'])
-        xG_h, xG_a = await get_stats(fix['fixture']['id'])  # Strong: real stats
+        xG_h, xG_a = await get_stats(fix['fixture']['id'])
         tip = generate_tip(fix, odds_data, xG_h, xG_a)
-        if tip and tip['value'] > 0.1:  # Strong filter: high value only
+        if tip and tip['value'] > 0.1:
             tips.append(tip)
     
-    # Sort by value descending (strong: best first)
     tips.sort(key=lambda t: t['value'], reverse=True)
     
-    # Select top until 5+ odds
     selected = []
-    for tip in tips[:6]:  # Max 6
+    for tip in tips[:6]:
         selected.append(tip)
         combined_odds *= tip['odds']
         if combined_odds >= 5.0:
@@ -271,13 +248,11 @@ async def generate_daily_tips():
         "time_generated": datetime.datetime.now().strftime("%H:%M:%S UTC")
     }
 
-# Run async
 tips_data = await generate_daily_tips()
 pyscript.write('tips-output', json.dumps(tips_data))
     </py-script>
 
     <script>
-        // JS for UI and auto-update
         let lastDate = localStorage.getItem('lastTipDate') || '';
         const container = document.getElementById('tips-container');
         const status = document.getElementById('status');
@@ -286,7 +261,6 @@ pyscript.write('tips-output', json.dumps(tips_data))
         const combinedEl = document.getElementById('combined-odds');
         const lastUpdatedEl = document.getElementById('last-updated');
 
-        // Wait for PyScript
         document.addEventListener('pyscript-ready', () => {
             generateBtn.disabled = false;
             checkAndGenerate();
@@ -295,7 +269,7 @@ pyscript.write('tips-output', json.dumps(tips_data))
         async function checkAndGenerate() {
             const today = new Date().toDateString();
             if (lastDate !== today) {
-                status.textContent = 'Fetching fresh data from API-Sports with retries...';
+                status.textContent = 'Fetching from API-Sports with retries...';
                 await generateTips(true);
                 localStorage.setItem('lastTipDate', today);
             } else {
@@ -305,21 +279,20 @@ pyscript.write('tips-output', json.dumps(tips_data))
 
         async function generateTips(auto = false) {
             generateBtn.disabled = true;
-            // PyScript output
             const tipsOutput = document.getElementById('tips-output');
             if (tipsOutput && tipsOutput.textContent) {
                 try {
                     const data = JSON.parse(tipsOutput.textContent);
                     if (data.error) {
                         status.classList.add('error');
-                        status.textContent = 'API Failure - Try Refresh or Check Key/Quota';
+                        status.textContent = 'API Failure - Check Key/Quota';
                     } else {
                         displayTips(data.tips, data.combined_odds, data.date, data.time_generated);
                         saveTipsToStorage(data);
                     }
                 } catch (e) {
                     status.classList.add('error');
-                    status.textContent = 'Parsing Error - Retry.';
+                    status.textContent = 'Parsing Error - Retry';
                 }
             }
             generateBtn.disabled = false;
@@ -361,10 +334,9 @@ pyscript.write('tips-output', json.dumps(tips_data))
             }
         }
 
-        setInterval(checkAndGenerate, 3600000);  // Hourly check
+        setInterval(checkAndGenerate, 3600000);
     </script>
 
-    <!-- PyScript output -->
     <div id="tips-output" style="display: none;"></div>
 </body>
 </html>
